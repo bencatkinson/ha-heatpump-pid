@@ -14,6 +14,10 @@ set_tuning:
       integration: heatpump_pid
       domain: climate
   fields:
+    mode:
+      selector:
+        select:
+          options: ["heat", "cool"]
     kp:
       selector:
         number: {min: 0, max: 10, step: 0.05, mode: box}
@@ -26,3 +30,20 @@ set_tuning:
     kff:
       selector:
         number: {min: 0, max: 1, step: 0.01, mode: box}
+start_autotune:
+  target:
+    entity:
+      integration: heatpump_pid
+      domain: climate
+  fields:
+    step_size:
+      selector:
+        number: {min: 0.5, max: 4, step: 0.5, mode: box}
+    aggressiveness:
+      selector:
+        number: {min: 0.5, max: 3, step: 0.1, mode: box}
+cancel_autotune:
+  target:
+    entity:
+      integration: heatpump_pid
+      domain: climate

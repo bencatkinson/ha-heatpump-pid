@@ -93,14 +93,52 @@ the P/I/D terms and the learned stop/start points.
 
 Services:
 
-- `heatpump_pid.set_tuning`: set `kp`, `ki`, `kd`, `kff` (used by auto-tune).
+- `heatpump_pid.set_tuning`: set `kp`, `ki`, `kd`, `kff`, optionally for one `mode`.
+- `heatpump_pid.start_autotune` / `heatpump_pid.cancel_autotune`: see below.
 - `heatpump_pid.reset_learning`: forget the learned stop and start points.
 - `heatpump_pid.resume`: end a manual override pause.
 
 **Diagnostics** (on the integration page) downloads the settings, learned
 values and the last 48 hours of controller samples (room, unit, compressor
-frequency, coil temperatures, power, setpoint sent). That's the data the
-upcoming auto-tune fits against.
+frequency, coil temperatures, power, setpoint sent).
+
+## Auto-tune
+
+Auto-tune measures how your room and unit respond and sets the PID gains for
+the current mode. Heating and cooling are tuned separately, so run it once in
+each season.
+
+**To run it:** set the thermostat to heat (or cool) at a normal target, then
+press **Start auto-tune** on the device page (or call
+`heatpump_pid.start_autotune`). It takes about 1.5 to 3 hours:
+
+1. **Settle.** Normal control until the room has held within 0.3 °C of
+   target, with the compressor running, for 15 minutes.
+2. **Baseline.** Holds the unit's demand steady for 10 minutes to measure
+   drift.
+3. **Step.** Adds 1.5 °C of demand and holds it, recording room temperature,
+   compressor frequency and power, until the room has moved 1 °C or 75 minutes
+   pass. Expect the room to overshoot target by up to about 1 °C here.
+4. **Fit and apply.** Fits a dead-time model to the room's response, checks
+   the compressor really changed speed, and computes gains with the SIMC
+   rules. The results are written as that mode's **Kp/Ki (auto-tuned)**
+   options, and normal control resumes.
+
+Follow it in the `autotune_state` and `autotune_message` attributes. The
+measured model (dead time, slope or time constant, compressor Hz per °C of
+demand, fit quality) is kept in `autotune_last_heat` / `autotune_last_cool`.
+
+It stops without changing anything if the compressor stops, a defrost starts,
+the room strays more than 1.5 °C the wrong way, or you change the mode, target
+or the unit's setpoint. **Cancel auto-tune** stops it at any time.
+
+It needs enough load that the compressor runs continuously at target. On a
+mild day the unit may cycle even at minimum speed, so tune on a colder (or
+hotter) day. The service takes `step_size` (bigger for a clearer response)
+and `aggressiveness` (above 1 is gentler).
+
+Per-mode gains can be edited or cleared under **Configure → Control and
+tuning**. Empty means the general Kp/Ki apply.
 
 ## Development
 

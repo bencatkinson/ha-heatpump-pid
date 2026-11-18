@@ -97,7 +97,11 @@
           "setpoint_step": "Unit setpoint step",
           "min_setpoint": "Lowest setpoint to send",
           "max_setpoint": "Highest setpoint to send",
-          "discharge_limit": "Discharge temperature limit"
+          "discharge_limit": "Discharge temperature limit",
+          "heat_kp": "Heating Kp (auto-tuned)",
+          "heat_ki": "Heating Ki (auto-tuned)",
+          "cool_kp": "Cooling Kp (auto-tuned)",
+          "cool_ki": "Cooling Ki (auto-tuned)"
         },
         "data_description": {
           "update_interval": "How often the controller runs.",
@@ -111,7 +115,11 @@
           "restart_hysteresis": "Once the compressor stops, the room must drift this far from target before it restarts.",
           "idle_margin": "Hold the unit this far above its learned stop point so the compressor idles instead of stopping.",
           "max_boost": "Largest demand above idle.",
-          "setpoint_step": "Pick 0.5 °C only once the ESPHome device runs the tclac patch that sends half degrees; stock tclac rounds to whole degrees. Half-degree steps double the controller's resolution."
+          "setpoint_step": "Pick 0.5 °C only once the ESPHome device runs the tclac patch that sends half degrees; stock tclac rounds to whole degrees. Half-degree steps double the controller's resolution.",
+          "heat_kp": "Set by auto-tune. Leave empty to use the general Kp in heat mode.",
+          "heat_ki": "Set by auto-tune. Leave empty to use the general Ki in heat mode.",
+          "cool_kp": "Set by auto-tune. Leave empty to use the general Kp in cool mode.",
+          "cool_ki": "Set by auto-tune. Leave empty to use the general Ki in cool mode."
         }
       }
     },
@@ -147,7 +155,39 @@
         "kff": {
           "name": "Outdoor feed-forward gain",
           "description": "°C of demand per °C between target and outdoor. Usually 0 until auto-tuned."
+        },
+        "mode": {
+          "name": "Mode",
+          "description": "heat or cool to set that mode's gains; leave empty for the defaults."
         }
+      }
+    },
+    "start_autotune": {
+      "name": "Start auto-tune",
+      "description": "Run a step test in the current mode (heat or cool) and set that mode's PID gains. Takes about 1.5 to 3 hours.",
+      "fields": {
+        "step_size": {
+          "name": "Step size",
+          "description": "°C of extra demand for the step (default 1.5)."
+        },
+        "aggressiveness": {
+          "name": "Gentleness",
+          "description": "1 is the default; higher is gentler and slower, lower is faster."
+        }
+      }
+    },
+    "cancel_autotune": {
+      "name": "Cancel auto-tune",
+      "description": "Stop a running auto-tune; gains are left unchanged."
+    }
+  },
+  "entity": {
+    "button": {
+      "start_autotune": {
+        "name": "Start auto-tune"
+      },
+      "cancel_autotune": {
+        "name": "Cancel auto-tune"
       }
     }
   }

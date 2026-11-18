@@ -67,6 +67,11 @@ STORE_VERSION = 1
 SERVICE_RESET_LEARNING = "reset_learning"
 SERVICE_SET_TUNING = "set_tuning"
 SERVICE_RESUME = "resume"
+SERVICE_START_AUTOTUNE = "start_autotune"
+SERVICE_CANCEL_AUTOTUNE = "cancel_autotune"
+
+# Per-mode gains written by auto-tune (blank = use kp/ki/kff).
+MODE_GAIN_FIELDS = ("heat_kp", "heat_ki", "heat_kff", "cool_kp", "cool_ki", "cool_kff")
 
 # Entity-id suffixes the ESPHome decoder package uses (docs/entities.md in
 # Bencatkinson/esphome-tcl-heatpump). Sensors on the same device as the chosen

@@ -33,6 +33,7 @@ from homeassistant.const import (
     UnitOfTemperature,
 )
 from homeassistant.core import Event, EventStateChangedData, HomeAssistant, State, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import (
@@ -64,10 +65,13 @@ from .const import (
     CONF_UPDATE_INTERVAL,
     DEFAULTS,
     DOMAIN,
+    MODE_GAIN_FIELDS,
     OPTIONAL_SENSORS,
+    SERVICE_CANCEL_AUTOTUNE,
     SERVICE_RESET_LEARNING,
     SERVICE_RESUME,
     SERVICE_SET_TUNING,
+    SERVICE_START_AUTOTUNE,
     STORE_VERSION,
     TUNING_FIELDS,
 )
@@ -81,6 +85,7 @@ from .controller import (
     SetpointController,
     UnitState,
 )
+from .tuner import DONE, AutoTuner, TunerConfig
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -102,7 +107,10 @@ def _float(state: State | None, attr: str | None = None) -> float | None:
 
 def build_params(options: dict[str, Any]) -> ControllerParams:
     opts = {**DEFAULTS, **options}
-    values = {k: float(opts[k]) for k in TUNING_FIELDS}
+    values: dict[str, Any] = {k: float(opts[k]) for k in TUNING_FIELDS}
+    for key in MODE_GAIN_FIELDS:
+        if opts.get(key) is not None:
+            values[key] = float(opts[key])
     values["min_run_s"] = float(opts[CONF_MIN_RUN]) * 60
     values["min_off_s"] = float(opts[CONF_MIN_OFF]) * 60
     values["max_change"] = max(values["setpoint_step"], 1.0)
@@ -115,6 +123,7 @@ async def async_setup_entry(
     store: Store = Store(hass, STORE_VERSION, f"{DOMAIN}.{entry.entry_id}")
     stored = await store.async_load() or {}
     entity = HeatPumpPidClimate(hass, entry, store, stored)
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = entity
     async_add_entities([entity])
 
     platform = entity_platform.async_get_current_platform()
@@ -122,9 +131,21 @@ async def async_setup_entry(
     platform.async_register_entity_service(SERVICE_RESUME, {}, "async_resume")
     platform.async_register_entity_service(
         SERVICE_SET_TUNING,
-        {vol.Optional(k): vol.Coerce(float) for k in ("kp", "ki", "kd", "kff")},
+        {
+            vol.Optional("mode"): vol.In([HEAT, COOL]),
+            **{vol.Optional(k): vol.Coerce(float) for k in ("kp", "ki", "kd", "kff")},
+        },
         "async_set_tuning",
     )
+    platform.async_register_entity_service(
+        SERVICE_START_AUTOTUNE,
+        {
+            vol.Optional("step_size"): vol.All(vol.Coerce(float), vol.Range(min=0.5, max=4)),
+            vol.Optional("aggressiveness"): vol.All(vol.Coerce(float), vol.Range(min=0.5, max=3)),
+        },
+        "async_start_autotune",
+    )
+    platform.async_register_entity_service(SERVICE_CANCEL_AUTOTUNE, {}, "async_cancel_autotune")
 
 
 class HeatPumpPidClimate(ClimateEntity, RestoreEntity):
@@ -155,6 +176,8 @@ class HeatPumpPidClimate(ClimateEntity, RestoreEntity):
             build_params(self._opts), Learned.from_dict(stored.get("learned"))
         )
         self.controller.restore(stored.get("integral"), stored.get("mode"))
+        self.tuner = AutoTuner()
+        self._tune_results: dict[str, Any] = dict(stored.get("tune_results") or {})
 
         self._attr_hvac_mode = HVACMode.OFF
         self._attr_target_temperature = 21.0
@@ -165,6 +188,7 @@ class HeatPumpPidClimate(ClimateEntity, RestoreEntity):
         self._last_sent_at = 0.0
         self._override_until: datetime | None = None
         self._unsubs: list[Any] = []
+        self._applied: set[str] = set()
 
     # -------------------------------------------------------------- lifecycle
 
@@ -296,6 +320,14 @@ class HeatPumpPidClimate(ClimateEntity, RestoreEntity):
             "kp": c.params.kp,
             "ki": c.params.ki,
             "kd": c.params.kd,
+            "heat_kp": c.params.gains(HEAT)[0],
+            "heat_ki": c.params.gains(HEAT)[1],
+            "cool_kp": c.params.gains(COOL)[0],
+            "cool_ki": c.params.gains(COOL)[1],
+            "autotune_state": self.tuner.state,
+            "autotune_message": self.tuner.message or None,
+            "autotune_last_heat": self._tune_results.get(HEAT),
+            "autotune_last_cool": self._tune_results.get(COOL),
         }
         if (d := self._decision) is not None:
             attrs.update(
@@ -314,6 +346,8 @@ class HeatPumpPidClimate(ClimateEntity, RestoreEntity):
             return "passthrough" if self.hvac_mode != HVACMode.OFF else "off"
         if self._override_until and dt_util.utcnow() < self._override_until:
             return "override"
+        if self.tuner.running:
+            return f"autotune_{self.tuner.state}"
         if self._fallback_reason:
             return f"{R_FALLBACK}: {self._fallback_reason}"
         return self._decision.reason if self._decision else "starting"
@@ -332,6 +366,7 @@ class HeatPumpPidClimate(ClimateEntity, RestoreEntity):
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         hvac_mode = HVACMode(hvac_mode)
+        self._cancel_tune("mode changed")
         self._attr_hvac_mode = hvac_mode
         self._override_until = None
         self.controller.reset()
@@ -365,10 +400,45 @@ class HeatPumpPidClimate(ClimateEntity, RestoreEntity):
         self._override_until = None
         await self._async_control()
 
-    async def async_set_tuning(self, **gains: float) -> None:
-        """Hook for the auto-tuner: store new gains in the entry options."""
-        options = {**self._entry.options, **{k: float(v) for k, v in gains.items()}}
+    async def async_set_tuning(self, mode: str | None = None, **gains: float) -> None:
+        """Store gains in the entry options, for one mode or as the defaults."""
+        prefix = f"{mode}_" if mode else ""
+        new = {f"{prefix}{k}": float(v) for k, v in gains.items()}
+        if mode and "kd" in gains:
+            new.pop(f"{mode}_kd")
+            new["kd"] = float(gains["kd"])
+        options = {**self._entry.options, **new}
         self.hass.config_entries.async_update_entry(self._entry, options=options)
+
+    async def async_start_autotune(
+        self, step_size: float | None = None, aggressiveness: float | None = None
+    ) -> None:
+        """Run a step test in the current mode and set that mode's gains."""
+        if self.hvac_mode not in REGULATED:
+            raise HomeAssistantError("Set the thermostat to heat or cool before auto-tuning")
+        if self.target_temperature is None:
+            raise HomeAssistantError("Set a target temperature first")
+        cfg = TunerConfig()
+        if step_size is not None:
+            cfg.step_size = step_size
+        if aggressiveness is not None:
+            cfg.aggressiveness = aggressiveness
+        self.tuner = AutoTuner(cfg)
+        self.tuner.start(time.monotonic(), REGULATED[self.hvac_mode], self.target_temperature)
+        _LOGGER.info("%s: auto-tune started in %s mode", self.entity_id, self.hvac_mode)
+        await self._async_control()
+
+    async def async_cancel_autotune(self) -> None:
+        self._cancel_tune("cancelled by user")
+        self.async_write_ha_state()
+
+    def _cancel_tune(self, why: str) -> None:
+        if self.tuner.running:
+            was_open_loop = self.tuner.state != "settling"
+            self.tuner.cancel(why)
+            if was_open_loop:
+                self.controller.integral = self.tuner.restore_integral
+            _LOGGER.info("%s: auto-tune stopped: %s", self.entity_id, why)
 
     # ----------------------------------------------------------------- control
 
@@ -394,6 +464,7 @@ class HeatPumpPidClimate(ClimateEntity, RestoreEntity):
         if old is not None and old.state != new.state and new.state != self.hvac_mode.value:
             try:
                 self._attr_hvac_mode = HVACMode(new.state)
+                self._cancel_tune("mode changed at the unit")
                 self.controller.reset()
                 _LOGGER.info("%s: unit mode changed at the unit to %s", self.entity_id, new.state)
             except ValueError:
@@ -410,6 +481,7 @@ class HeatPumpPidClimate(ClimateEntity, RestoreEntity):
         if minutes <= 0:
             return
         self._override_until = dt_util.utcnow() + timedelta(minutes=minutes)
+        self._cancel_tune("setpoint changed at the unit")
         _LOGGER.info(
             "%s: unit setpoint changed to %s outside this controller, pausing until %s",
             self.entity_id,
@@ -491,17 +563,54 @@ class HeatPumpPidClimate(ClimateEntity, RestoreEntity):
         self._update_room()
         self._fallback_reason = self._room_problem()
         if self._fallback_reason:
+            self._cancel_tune(self._fallback_reason)
             await self._send(self.controller.fallback(target))
             self.async_write_ha_state()
             return
 
+        now = time.monotonic()
+        unit = self._unit_state()
+        cmode = REGULATED[mode]
+        forced = None
+        if self.tuner.running:
+            was_open_loop = self.tuner.state != "settling"
+            forced = self.tuner.step(
+                now,
+                cmode,
+                target,
+                self.current_temperature,
+                unit,
+                self.controller.last_demand,
+                self.controller.integral,
+                self.controller.defrosting,
+            )
+            if not self.tuner.running and was_open_loop:
+                self.controller.integral = self.tuner.restore_integral
         decision = self.controller.update(
-            time.monotonic(), REGULATED[mode], target, self.current_temperature, self._unit_state()
+            now, cmode, target, self.current_temperature, unit, forced_demand=forced
         )
         self._decision = decision
         await self._send(decision.setpoint)
+        if (
+            self.tuner.state == DONE
+            and self.tuner.result is not None
+            and self.tuner.mode not in self._applied
+        ):
+            await self._apply_tune()
+            return
         await self._async_save()
         self.async_write_ha_state()
+
+    async def _apply_tune(self) -> None:
+        result = self.tuner.result
+        assert result is not None
+        self._applied.add(result.mode)
+        self._tune_results[result.mode] = result.as_dict()
+        _LOGGER.info("%s: auto-tune result %s", self.entity_id, result.as_dict())
+        await self._async_save(now=True)
+        self.async_write_ha_state()
+        # Writing the options reloads the entry with the new gains.
+        await self.async_set_tuning(mode=result.mode, kp=result.kp, ki=result.ki)
 
     async def _send(self, setpoint: float) -> None:
         current = _float(self._hp_state, ATTR_TEMPERATURE)
@@ -527,6 +636,7 @@ class HeatPumpPidClimate(ClimateEntity, RestoreEntity):
                 "learned": self.controller.learned.as_dict(),
                 "integral": self.controller.integral,
                 "mode": self.controller.mode,
+                "tune_results": self._tune_results,
             }
 
         if now:

@@ -217,7 +217,8 @@ class HeatPumpPidOptionsFlow(OptionsFlow):
             if values["min_setpoint"] >= values["max_setpoint"]:
                 errors["max_setpoint"] = "range"
             else:
-                return self.async_create_entry(data={**values, **self._new})
+                keep = {k: current[k] for k in ("heat_kff", "cool_kff") if current.get(k) is not None}
+                return self.async_create_entry(data={**keep, **values, **self._new})
 
         fields: dict[Any, Any] = {}
         for key, sel in {**_BEHAVIOUR_SELECTORS, **_TUNING_SELECTORS}.items():
@@ -225,4 +226,8 @@ class HeatPumpPidOptionsFlow(OptionsFlow):
             if key == "setpoint_step":
                 default = "0.5" if float(default) == 0.5 else "1.0"
             fields[vol.Required(key, default=default)] = sel
+        for key in ("heat_kp", "heat_ki", "cool_kp", "cool_ki"):
+            value = current.get(key)
+            desc = {"suggested_value": value} if value is not None else None
+            fields[vol.Optional(key, description=desc)] = _TUNING_SELECTORS[key[5:]]
         return self.async_show_form(step_id="tuning", data_schema=vol.Schema(fields), errors=errors)

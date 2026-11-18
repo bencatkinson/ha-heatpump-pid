@@ -49,6 +49,7 @@ R_WAIT_RESTART = "waiting_restart"
 R_DEFROST = "defrost"
 R_DISCHARGE = "discharge_limit"
 R_FALLBACK = "fallback"
+R_AUTOTUNE = "autotune"
 
 
 @dataclass
@@ -73,6 +74,22 @@ class ControllerParams:
     discharge_limit: float = 90.0  # °C; no more demand above this
     defrost_coil_margin: float = 0.0  # heat: indoor coil below room+margin = defrost
     probe_rate: float = 1.0  # °C/hour to move a threshold the unit is ignoring
+    # Per-mode gains written by the auto-tuner. None = use kp/ki/kff above.
+    heat_kp: float | None = None
+    heat_ki: float | None = None
+    heat_kff: float | None = None
+    cool_kp: float | None = None
+    cool_ki: float | None = None
+    cool_kff: float | None = None
+
+    def gains(self, mode: str) -> tuple[float, float, float]:
+        """(kp, ki, kff) for a mode, preferring auto-tuned values."""
+
+        def pick(name: str, default: float) -> float:
+            value = getattr(self, f"{mode}_{name}", None)
+            return default if value is None else value
+
+        return pick("kp", self.kp), pick("ki", self.ki), pick("kff", self.kff)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ControllerParams:
@@ -198,6 +215,10 @@ class SetpointController:
         self.mode = mode
 
     @property
+    def last_demand(self) -> float | None:
+        return self._last_demand
+
+    @property
     def defrosting(self) -> bool:
         return self._defrosting
 
@@ -281,9 +302,15 @@ class SetpointController:
         target: float,
         room: float,
         unit: UnitState,
+        forced_demand: float | None = None,
     ) -> Decision:
-        """Compute the setpoint to send. ``now`` is a monotonic time in seconds."""
+        """Compute the setpoint to send. ``now`` is a monotonic time in seconds.
+
+        ``forced_demand`` bypasses the PID and short-cycle guard and holds the
+        given demand (open loop). The auto-tuner uses it for its step test.
+        """
         p = self.params
+        kp, ki, kff = p.gains(mode)
         if mode not in MODES:
             raise ValueError(f"unsupported mode {mode}")
         if mode != self.mode:
@@ -314,10 +341,10 @@ class SetpointController:
         ceiling = idle + p.max_boost
 
         ff = 0.0
-        if p.kff and unit.outdoor_temp is not None:
-            ff = p.kff * s * (target - unit.outdoor_temp)
+        if kff and unit.outdoor_temp is not None:
+            ff = kff * s * (target - unit.outdoor_temp)
 
-        p_term = p.kp * eff_error
+        p_term = kp * eff_error
         d_term = p.kd * de_dt
         raw = idle + p_term + self.integral + d_term + ff
 
@@ -348,7 +375,8 @@ class SetpointController:
         # our threshold estimate is off. Walk it toward the unit's real one.
         probe = p.probe_rate * dt_h
         if (
-            on
+            forced_demand is None
+            and on
             and run_s is not None
             and run_s >= p.min_run_s
             and raw <= floor
@@ -359,7 +387,8 @@ class SetpointController:
         ):
             ml.stop_threshold = max(-4.0, ml.stop_threshold - probe)
         if (
-            on is False
+            forced_demand is None
+            and on is False
             and off_s is not None
             and off_s >= p.min_off_s + 600
             and self._last_demand is not None
@@ -374,8 +403,15 @@ class SetpointController:
                 if eff_error > 0:
                     freeze = True
 
+        if forced_demand is not None:
+            demand = max(floor, min(ceiling, forced_demand))
+            if not (hot_discharge and self._last_demand is not None and demand > self._last_demand):
+                reason = R_AUTOTUNE
+            else:
+                demand = self._last_demand
+            freeze = True
         # Short-cycle guard.
-        if on and run_s is not None and run_s < p.min_run_s and demand < idle:
+        elif on and run_s is not None and run_s < p.min_run_s and demand < idle:
             demand = idle
             reason = R_MIN_RUN
             freeze = freeze or eff_error < 0
@@ -405,7 +441,7 @@ class SetpointController:
             setpoint = self._limit(base + s * demand, toward)
 
         if not freeze and dt_h > 0:
-            self.integral += p.ki * eff_error * dt_h
+            self.integral += ki * eff_error * dt_h
             lo, hi = -(p.max_boost + p.off_margin + p.idle_margin), p.max_boost
             self.integral = max(lo, min(hi, self.integral))
 

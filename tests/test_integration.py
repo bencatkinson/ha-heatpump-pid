@@ -200,3 +200,45 @@ async def test_set_tuning_service(hass: HomeAssistant) -> None:
     await hass.async_block_till_done()
     assert entry.options["kp"] == 0.8
     assert hass.states.get(_our_entity(hass)).attributes["ki"] == 0.4
+
+
+async def test_autotune_start_cancel_and_apply(hass: HomeAssistant) -> None:
+    from homeassistant.exceptions import HomeAssistantError
+
+    from custom_components.heatpump_pid.tuner import DONE, TuneResult
+
+    _hp_state(hass, "heat", current=21, setpoint=21)
+    hass.states.async_set(ROOM, "21.0")
+    hass.states.async_set(HZ, "30")
+    entry = await _setup(hass)
+    _mock_services(hass)
+    ent = _our_entity(hass)
+    obj = _obj(hass, ent)
+
+    await obj.async_set_hvac_mode("off")
+    with pytest.raises(HomeAssistantError):
+        await obj.async_start_autotune()
+
+    await obj.async_set_hvac_mode("heat")
+    await obj.async_set_temperature(temperature=21)
+    buttons = [e for e in hass.states.async_entity_ids("button")]
+    start = next(b for b in buttons if "start" in b)
+    cancel = next(b for b in buttons if "cancel" in b)
+    await hass.services.async_call("button", "press", {"entity_id": start}, blocking=True)
+    assert hass.states.get(ent).attributes["control_state"] == "autotune_settling"
+    await hass.services.async_call("button", "press", {"entity_id": cancel}, blocking=True)
+    assert hass.states.get(ent).attributes["autotune_state"] == "failed"
+
+    # A finished tune writes that mode's gains and reloads.
+    await obj.async_start_autotune()
+    obj.tuner.state = DONE
+    obj.tuner.mode = "heat"
+    obj.tuner.result = TuneResult("heat", 2.2, 0.7, "integrating", None, 1.8, None, 6.0, 0.97, 20.0, 1.0, 0.4, 40)
+    await obj._async_control()
+    await hass.async_block_till_done()
+    assert entry.options["heat_kp"] == 2.2
+    assert entry.options["heat_ki"] == 0.7
+    attrs = hass.states.get(_our_entity(hass)).attributes
+    assert attrs["heat_kp"] == 2.2
+    assert attrs["cool_kp"] == DEFAULTS["kp"]
+    assert attrs["autotune_last_heat"]["theta_minutes"] == 6.0
