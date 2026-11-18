@@ -111,7 +111,7 @@
           "restart_hysteresis": "Once the compressor stops, the room must drift this far from target before it restarts.",
           "idle_margin": "Hold the unit this far above its learned stop point so the compressor idles instead of stopping.",
           "max_boost": "Largest demand above idle.",
-          "setpoint_step": "Use 0.5 only if the unit accepts half degrees."
+          "setpoint_step": "Pick 0.5 °C only once the ESPHome device runs the tclac patch that sends half degrees; stock tclac rounds to whole degrees. Half-degree steps double the controller's resolution."
         }
       }
     },

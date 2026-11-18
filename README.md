@@ -40,8 +40,10 @@ the temperature it measures itself. The integration calls that the *demand*.
    - After a stop, no restart until the room drifts past the restart hysteresis.
    - Integrator is frozen at maximum frequency, during defrost (heating, with the
      indoor coil colder than the room), and at the discharge temperature limit.
-   - Setpoints are clamped, quantised to the unit's step (1 °C for stock tclac)
-     and moved at most 1 °C per control cycle.
+   - Setpoints are clamped, quantised to the unit's step and moved at most
+     1 °C per control cycle. The step is 1 °C for stock tclac. Set **Unit
+     setpoint step** to 0.5 °C under Configure once the ESPHome device runs the
+     half-degree tclac patch, for twice the resolution.
 5. **Safe fallbacks.** If the room sensor goes unavailable or stale, the unit is
    simply set to your target. If the ESPHome serial link sensor is off, unit
    sensors are ignored.

@@ -146,3 +146,15 @@ def test_learning_round_trips():
     again = Learned.from_dict(ctrl.learned.as_dict())
     assert again.heat.stop_threshold == -1.7
     assert again.max_hz == 88
+
+
+def test_half_degree_steps():
+    ctrl = SetpointController(ControllerParams(setpoint_step=0.5))
+    seen = set()
+    room = 20.3
+    for i in range(30):
+        d = ctrl.update(i * 60, HEAT, 21.0, room, UnitState(unit_temp=room + 0.7, unit_setpoint=21, hz=30))
+        seen.add(d.setpoint)
+        room += 0.03
+    assert all((sp * 2).is_integer() for sp in seen)
+    assert any(not sp.is_integer() for sp in seen), "0.5 °C steps should be used"

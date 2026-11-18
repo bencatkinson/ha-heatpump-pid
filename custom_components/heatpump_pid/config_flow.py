@@ -77,7 +77,14 @@ _TUNING_SELECTORS = {
     "restart_hysteresis": _num(0, 2, 0.05, "°C"),
     "idle_margin": _num(0, 3, 0.1, "°C"),
     "max_boost": _num(0.5, 10, 0.5, "°C"),
-    "setpoint_step": selector.SelectSelector(selector.SelectSelectorConfig(options=["1.0", "0.5"])),
+    "setpoint_step": selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=[
+                selector.SelectOptionDict(value="1.0", label="1 °C (stock tclac)"),
+                selector.SelectOptionDict(value="0.5", label="0.5 °C (tclac patched for half degrees)"),
+            ]
+        )
+    ),
     "min_setpoint": _num(5, 30, 0.5, "°C"),
     "max_setpoint": _num(16, 35, 0.5, "°C"),
     "discharge_limit": _num(50, 120, 1, "°C"),
