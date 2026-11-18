@@ -1,0 +1,28 @@
+reset_learning:
+  target:
+    entity:
+      integration: heatpump_pid
+      domain: climate
+resume:
+  target:
+    entity:
+      integration: heatpump_pid
+      domain: climate
+set_tuning:
+  target:
+    entity:
+      integration: heatpump_pid
+      domain: climate
+  fields:
+    kp:
+      selector:
+        number: {min: 0, max: 10, step: 0.05, mode: box}
+    ki:
+      selector:
+        number: {min: 0, max: 10, step: 0.05, mode: box}
+    kd:
+      selector:
+        number: {min: 0, max: 10, step: 0.05, mode: box}
+    kff:
+      selector:
+        number: {min: 0, max: 1, step: 0.01, mode: box}

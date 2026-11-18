@@ -1,0 +1,154 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Heat pump",
+        "description": "Pick the heat pump's existing climate entity. This integration creates a new thermostat that steers its setpoint.",
+        "data": {
+          "name": "Name",
+          "heatpump_entity": "Heat pump climate entity"
+        }
+      },
+      "sensors": {
+        "title": "Sensors",
+        "data": {
+          "room_sensor": "Room temperature sensor",
+          "compressor_freq_sensor": "Compressor frequency",
+          "compressor_running_sensor": "Compressor running",
+          "outdoor_temp_sensor": "Outdoor temperature",
+          "indoor_coil_sensor": "Indoor coil temperature",
+          "outdoor_coil_sensor": "Outdoor coil temperature",
+          "discharge_temp_sensor": "Compressor discharge temperature",
+          "unit_temp_sensor": "Unit return-air temperature",
+          "link_sensor": "Serial link",
+          "power_sensor": "Power",
+          "energy_sensor": "Energy"
+        },
+        "data_description": {
+          "room_sensor": "The sensor the controller regulates to (Mysa, Zigbee, anything).",
+          "compressor_freq_sensor": "Used to learn when the compressor stops and to spot maximum output.",
+          "compressor_running_sensor": "Optional. If empty, frequency above 0 counts as running.",
+          "outdoor_temp_sensor": "Used for optional feed-forward.",
+          "indoor_coil_sensor": "Used to detect defrost in heating.",
+          "outdoor_coil_sensor": "Logged for auto-tuning.",
+          "discharge_temp_sensor": "Demand is not raised further above the discharge limit.",
+          "unit_temp_sensor": "Optional. The unit's own sensor at full resolution. If empty, the heat pump entity's current temperature is used.",
+          "link_sensor": "Optional. When off, the unit sensors are ignored as stale.",
+          "power_sensor": "Optional. Logged for auto-tuning.",
+          "energy_sensor": "Optional. Logged for auto-tuning."
+        },
+        "description": "Pick the room sensor to regulate to. The other sensors are optional but make control much better."
+      }
+    },
+    "error": {
+      "same_entity": "Pick a room sensor, not the heat pump itself."
+    },
+    "abort": {
+      "already_configured": "This heat pump is already set up."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Sensors",
+        "data": {
+          "room_sensor": "Room temperature sensor",
+          "compressor_freq_sensor": "Compressor frequency",
+          "compressor_running_sensor": "Compressor running",
+          "outdoor_temp_sensor": "Outdoor temperature",
+          "indoor_coil_sensor": "Indoor coil temperature",
+          "outdoor_coil_sensor": "Outdoor coil temperature",
+          "discharge_temp_sensor": "Compressor discharge temperature",
+          "unit_temp_sensor": "Unit return-air temperature",
+          "link_sensor": "Serial link",
+          "power_sensor": "Power",
+          "energy_sensor": "Energy"
+        },
+        "data_description": {
+          "room_sensor": "The sensor the controller regulates to (Mysa, Zigbee, anything).",
+          "compressor_freq_sensor": "Used to learn when the compressor stops and to spot maximum output.",
+          "compressor_running_sensor": "Optional. If empty, frequency above 0 counts as running.",
+          "outdoor_temp_sensor": "Used for optional feed-forward.",
+          "indoor_coil_sensor": "Used to detect defrost in heating.",
+          "outdoor_coil_sensor": "Logged for auto-tuning.",
+          "discharge_temp_sensor": "Demand is not raised further above the discharge limit.",
+          "unit_temp_sensor": "Optional. The unit's own sensor at full resolution. If empty, the heat pump entity's current temperature is used.",
+          "link_sensor": "Optional. When off, the unit sensors are ignored as stale.",
+          "power_sensor": "Optional. Logged for auto-tuning.",
+          "energy_sensor": "Optional. Logged for auto-tuning."
+        }
+      },
+      "tuning": {
+        "title": "Control and tuning",
+        "data": {
+          "update_interval": "Control interval",
+          "sensor_timeout": "Room sensor timeout",
+          "override_minutes": "Manual override pause",
+          "min_run_minutes": "Minimum compressor run time",
+          "min_off_minutes": "Minimum compressor off time",
+          "kp": "Proportional gain (Kp)",
+          "ki": "Integral gain (Ki)",
+          "kd": "Derivative gain (Kd)",
+          "kff": "Outdoor feed-forward gain",
+          "deadband": "Deadband",
+          "restart_hysteresis": "Restart hysteresis",
+          "idle_margin": "Idle margin",
+          "max_boost": "Maximum boost",
+          "setpoint_step": "Unit setpoint step",
+          "min_setpoint": "Lowest setpoint to send",
+          "max_setpoint": "Highest setpoint to send",
+          "discharge_limit": "Discharge temperature limit"
+        },
+        "data_description": {
+          "update_interval": "How often the controller runs.",
+          "sensor_timeout": "If the room sensor hasn't reported for this long, the unit is simply set to the target.",
+          "override_minutes": "Pause control this long after someone changes the unit's setpoint directly. 0 disables.",
+          "kp": "°C of extra demand per °C of room error.",
+          "ki": "°C of extra demand per °C·hour of room error.",
+          "kd": "Usually 0.",
+          "kff": "°C of demand per °C between target and outdoor. Usually 0 until auto-tuned.",
+          "deadband": "Room error smaller than this is ignored.",
+          "restart_hysteresis": "Once the compressor stops, the room must drift this far from target before it restarts.",
+          "idle_margin": "Hold the unit this far above its learned stop point so the compressor idles instead of stopping.",
+          "max_boost": "Largest demand above idle.",
+          "setpoint_step": "Use 0.5 only if the unit accepts half degrees."
+        }
+      }
+    },
+    "error": {
+      "range": "The highest setpoint must be above the lowest."
+    }
+  },
+  "services": {
+    "reset_learning": {
+      "name": "Reset learning",
+      "description": "Forget the learned compressor stop and start points."
+    },
+    "resume": {
+      "name": "Resume control",
+      "description": "End a manual override pause now."
+    },
+    "set_tuning": {
+      "name": "Set tuning",
+      "description": "Set PID gains (used by auto-tune).",
+      "fields": {
+        "kp": {
+          "name": "Proportional gain (Kp)",
+          "description": "°C of extra demand per °C of room error."
+        },
+        "ki": {
+          "name": "Integral gain (Ki)",
+          "description": "°C of extra demand per °C·hour of room error."
+        },
+        "kd": {
+          "name": "Derivative gain (Kd)",
+          "description": "Usually 0."
+        },
+        "kff": {
+          "name": "Outdoor feed-forward gain",
+          "description": "°C of demand per °C between target and outdoor. Usually 0 until auto-tuned."
+        }
+      }
+    }
+  }
+}
